@@ -1,15 +1,11 @@
-const rp = require("request-promise-native");
+const axios = require("axios");
 const Bottleneck = require("bottleneck");
 const async = require("async");
 const ProgressBar = require("progress");
+const requestConfig = require("./config");
 const argv = require("yargs")
-  .usage("Usage: node $0 --url=[URL] --max=[NUM] [OPTIONS]")
+  .usage("Usage: node $0 --max=[NUM] [OPTIONS]")
   .option({
-    u: {
-      alias: "url",
-      describe: "URL to test, best to be in quotation marks",
-      demandOption: true,
-    },
     per: {
       describe: "Set measurement basis",
       choices: ["second", "minute"],
@@ -26,13 +22,27 @@ const argv = require("yargs")
   .alias("h", "help")
   .demandOption(["max"]).argv;
 
-const url = argv.url;
+// Intercepter for storing request duration
+axios.interceptors.request.use((x) => {
+  // to avoid overwriting if another interceptor
+  // already defined the same object (meta)
+  x.meta = x.meta || {};
+  x.meta.requestStartedAt = new Date().getTime();
+  return x;
+});
+
+axios.interceptors.response.use((x) => {
+  x.responseTime = new Date().getTime() - x.config.meta.requestStartedAt;
+  return x;
+});
+
 const max = argv.max || 20;
 const min = argv.min || max;
 const reqOptions = {
-  simple: true,
-  resolveWithFullResponse: true,
-  time: true,
+  ...requestConfig,
+  validateStatus: function (status) {
+    return true;
+  },
 };
 let perTime;
 let testSettings;
@@ -91,8 +101,8 @@ function prepTest() {
     1,
     async function (prepNum) {
       try {
-        const speedtest = await rp(url, reqOptions);
-        speedtestTimings.push(speedtest.timingPhases.total);
+        const speedtest = await axios(reqOptions);
+        speedtestTimings.push(speedtest.responseTime);
         // var speedtestTiming = 150; // Pretend it's 500 ms
         // console.log(speedtestTiming, 'ms per run');
       } catch (error) {
@@ -166,7 +176,7 @@ function runTest(speedtestTiming) {
         (runNum, nextRun) => {
           // console.log('run', runNum, 'for', testLimit, 'per time');
           limiter
-            .schedule(() => rp(url, reqOptions))
+            .schedule(() => axios(reqOptions))
             .then((result) => {
               bar.tick();
               // console.log(result.statusCode);
